@@ -1,0 +1,81 @@
+  - resource_type: models
+    query: > 
+      models(jobId: $jobId, runId: $runId) {
+        name
+        unique_id: uniqueId
+        status
+        execution_time: executionTime
+        description
+        meta
+        tags
+        error
+        raw_sql: rawSql
+        raw_code: rawCode
+        resource_type: resourceType
+        compiled_sql: compiledSql
+        compiled_code: compiledCode
+        compile_started_at: compileStartedAt
+        compile_completed_at: compileCompletedAt
+        execute_started_at: executeStartedAt
+        execute_completed_at: executeCompletedAt
+        invocation_id: invocationId
+        skip}
+  - resource_type: tests
+    query: > 
+      tests(jobId: $jobId, runId: $runId) {
+        name
+        unique_id: uniqueId
+        status
+        execution_time: executionTime
+        column_name: columnName
+        description
+        meta
+        tags
+        error
+        fail
+        warn
+        skip
+        state
+        raw_sql: rawSql
+        raw_code: rawCode
+        resource_type: resourceType
+        compiled_sql: compiledSql
+        compiled_code: compiledCode
+        compile_started_at: compileStartedAt
+        compile_completed_at: compileCompletedAt
+        execute_started_at: executeStartedAt
+        execute_completed_at: executeCompletedAt
+        invocation_id: invocationId}
+  - resource_type: snapshots      
+    query: > 
+      snapshots(jobId: $jobId, runId: $runId) {
+        name
+        unique_id: uniqueId
+        status
+        execution_time: executionTime
+        description
+        meta
+        tags
+        error
+        execute_started_at: executeStartedAt
+        execute_completed_at: executeCompletedAt
+        raw_sql: rawSql
+        resource_type: resourceType
+        compiled_sql: compiledSql
+        skip}
+  - resource_type: seeds
+    query: > 
+      seeds(jobId: $jobId, runId: $runId) {
+        name
+        unique_id: uniqueId
+        status
+        execution_time: executionTime
+        description
+        meta
+        tags
+        error
+        execute_started_at: executeStartedAt
+        execute_completed_at: executeCompletedAt
+        compiled_sql: compiledSql
+        resource_type: resourceType
+        skip}

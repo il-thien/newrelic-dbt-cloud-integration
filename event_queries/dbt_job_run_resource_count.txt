@@ -1,0 +1,53 @@
+mutation {
+  eventsToMetricsCreateRule(rules: {
+    name: "dbt_job_run_failed_resource_count",
+    description:"""
+        Count of failed resources from dbt resource runs to be used by dbt job run entities 
+        for golden metrics. Includes facets to build a table of failed tests and failed models
+    """,
+    nrql:"""
+        select uniqueCount(unique_id) as dbt_job_run_failed_resource_count
+        from dbt_resource_run
+        where status not in ('success', 'pass', 'skipped', 'None')
+        FACET 
+            entity_id,
+            entity_name,
+            dbt_source,
+            run_team,
+            team,
+            project_name,
+            job_name,
+            environment_name,
+            unique_id,
+            resource_type,
+            name,
+            database_name,
+            schema_name,
+            test_model_name,
+            test_column_name,
+            status,
+            error,
+            slack_mentions
+    """,
+    accountId: 12000463
+  })
+  {
+    successes {
+      id
+      name
+      nrql
+      enabled
+    }
+    failures {
+      submitted {
+        name
+        nrql
+        accountId        
+      }
+      errors {
+        reason
+        description
+      }
+    }
+  }
+}

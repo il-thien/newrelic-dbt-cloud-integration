@@ -1,0 +1,8 @@
+connections:
+  dbt_cloud_admin_api: dbt_cloud_admin_api
+  nr_insights_query: nr_insights_query 
+  dbt_cloud_default: dbt_cloud_default 
+  dbt_cloud_discovery_api: dbt_cloud_discovery_api 
+  nr_insights_insert: nr_insights_insert
+  snowflake_api: SNOWFLAKE 
+default_team: 'Data Engineering'
