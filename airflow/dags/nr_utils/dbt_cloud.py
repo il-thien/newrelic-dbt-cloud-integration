@@ -1,6 +1,6 @@
 import re
-from airflow.providers.dbt.cloud.hooks.dbt import DbtCloudHook
 from airflow.providers.http.hooks.http import HttpHook
+
 
 
 
@@ -45,6 +45,7 @@ def get_dbt_cloud_manifest_filtered(manifest: dict) -> dict:
         test_model = node_data.get('test_metadata', {}).get('kwargs', {}).get('model') 
         match = re.search(r"\'(\w+)\'", test_model) if test_model else None
         model_name = match.group(1) if match else node_data.get('name') 
+        failed_test_rows_limit = node_data.get('config', {}).get('meta',{}).get('nr_config',{}).get('failed_test_row_limit',100)
         
         fields.append({
             'resource_type': node_data.get('resource_type'),
@@ -67,22 +68,36 @@ def get_dbt_cloud_manifest_filtered(manifest: dict) -> dict:
             'meta_config': node_data.get('config', {}).get('meta'),
             'team': node_data.get('config', {}).get('meta',{}).get('nr_config',{}).get('team','Data Engineering'),
             'alert_failed_test_rows':node_data.get('config', {}).get('meta',{}).get('nr_config',{}).get('alert_failed_test_rows',False),
-            'failed_test_row_limit': node_data.get('config', {}).get('meta',{}).get('nr_config',{}).get('failed_test_row_limit',10),
+            'failed_test_row_limit': failed_test_rows_limit if failed_test_rows_limit<=100 else 100,
             'slack_mentions': node_data.get('config', {}).get('meta',{}).get('nr_config',{}).get('slack_mentions'),
             'message': node_data.get('config', {}).get('meta',{}).get('nr_config',{}).get('message',''),
         })
     return fields
 
-#TODO: Change this to HTTPHook so we don't need another connection
+
+
+
 def get_dbt_cloud_manifest(run_id: str, http_conn_id: str) -> dict:
-    dbt_hook = DbtCloudHook(http_conn_id)
+    http_hook = HttpHook(http_conn_id=http_conn_id, method='GET')
+    endpoint = f'/runs/{run_id}/artifacts/manifest.json'
+    token = http_hook.get_connection(http_conn_id).password
+    headers = {
+        'Content-Type': "application/json",
+        'Authorization': f"Token {token}"
+    }
+
     try:
-        response = dbt_hook.get_job_run_artifact(run_id=run_id, path='manifest.json')
-        return response.json() 
+        
+        response = http_hook.run(endpoint=endpoint,headers=headers)
+        response.raise_for_status()
+        return response.json()
+
     except Exception as e:
         # Some jobs do not have a manifest. if the dbt command failed
-        print(f'Could not retrieve manifest.json from dbt cloud for run_id: {run_id}')
+        print(f'Could not retrieve manifest.json from dbt cloud for run_id: {run_id}. Exception: {e}')
         return {}
+
+
 
 
 def get_dbt_cloud_run_results(dbt_job_id: str, 
