@@ -2,6 +2,7 @@ import asyncio
 from airflow.providers.http.hooks.http import HttpAsyncHook
 
 
+
 async def run_in_loop(hook, data, headers):
     response = await hook.run(data=data, headers=headers, extra_options={'compress': True})
     text_response = await response.text()

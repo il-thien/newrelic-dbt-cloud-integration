@@ -1,17 +1,18 @@
 
 import pendulum
 import os
-import yaml
 import uuid
 from airflow.decorators import dag, task
 from airflow.models import XCom
 from airflow.utils.db import create_session
-from airflow.providers.http.operators.http import SimpleHttpOperator
+from airflow.providers.http.operators.http import HttpOperator
 # Import utility functions
 from nr_utils.snowflake import get_failed_test_rows
-from nr_utils import (
+from nr_utils.nr_utils import (
     flatten_dict,
     get_team_from_run,
+    extract_time_components,
+    read_config
     
 )
 from nr_utils.dbt_cloud import (
@@ -21,9 +22,22 @@ from nr_utils.dbt_cloud import (
     paginate_dbt_cloud_api_response,
     get_dbt_cloud_manifest,
     get_dbt_cloud_manifest_filtered,
-    get_dbt_cloud_run_results
+    get_dbt_cloud_run_results,
 )
 from nr_utils.http import upload_data
+
+current_directory = os.path.dirname(os.path.abspath(__file__))
+file_path = os.path.join(current_directory,'dag_config.yml')
+config = read_config(file_path)
+connections = config['connections']
+dbt_cloud_admin_api = connections['dbt_cloud_admin_api']
+nr_insights_query = connections['nr_insights_query'] 
+dbt_cloud_discovery_api =  connections['dbt_cloud_discovery_api'] 
+nr_insights_insert = connections['nr_insights_insert']
+snowflake_api =  connections['snowflake_api']
+default_team = config['default_team']
+
+
 
 @dag(
     start_date=pendulum.datetime(2024, 5, 29, tz="UTC"),
@@ -38,32 +52,14 @@ from nr_utils.http import upload_data
 def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
 
 
-    def read_config(file_name: str) -> dict:
-        loc = os.path.dirname(__file__)
-        conf_loc = os.path.join(loc, file_name)
-        with open(conf_loc) as f_handle:
-            try:
-                config = yaml.safe_load(f_handle)
-                return config
-            except yaml.YAMLError as excp:
-                raise excp
-
-
     # Configurations
     # MAX_STRING_LENGTH = 4096
-    config = read_config('dag_config.yaml')
-    connections = config['connections']
-    dbt_cloud_admin_api = connections['dbt_cloud_admin_api']
-    nr_insights_query = connections['nr_insights_query'] 
-    dbt_cloud_default = connections['dbt_cloud_default'] 
-    dbt_cloud_discovery_api =  connections['dbt_cloud_discovery_api'] 
-    nr_insights_insert = connections['nr_insights_insert']
-    snowflake_api =  connections['snowflake_api']
-    default_team = config['default_team'] 
+    
+    
 
     
     # TODO: Maybe switch to dbt_cloud_default API and build the endpoint with account and tenant
-    get_dbt_runs = SimpleHttpOperator(
+    get_dbt_runs = HttpOperator(
         task_id='get_dbt_runs',
         http_conn_id=dbt_cloud_admin_api,
         method='GET',
@@ -85,7 +81,7 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
     )
  
 
-    get_dbt_projects = SimpleHttpOperator(
+    get_dbt_projects = HttpOperator(
         task_id='get_dbt_projects',
         http_conn_id=dbt_cloud_admin_api,
         method='GET',
@@ -102,7 +98,7 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
 
 
     # Uses a different response filter because the environment can hold sensative data
-    get_dbt_environments = SimpleHttpOperator(
+    get_dbt_environments = HttpOperator(
         task_id='get_dbt_environments',
         http_conn_id=dbt_cloud_admin_api,
         method='GET',
@@ -116,6 +112,7 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
         response_check=dbt_cloud_validation,
         response_filter=dbt_cloud_secure_response_filter
     )
+
 
 
     # Get run ids already in NR1. This improves idempotency
@@ -151,7 +148,7 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
         return queries 
     
 
-    get_nr_run_ids = SimpleHttpOperator(
+    get_nr_run_ids = HttpOperator(
         task_id='get_nr_run_ids',
         http_conn_id=nr_insights_query,
         method='GET',
@@ -167,7 +164,7 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
     )
  
 
-    get_nr_resource_run_ids = SimpleHttpOperator(
+    get_nr_resource_run_ids = HttpOperator(
         task_id='get_nr_resource_run_ids',
         http_conn_id=nr_insights_query,
         method='GET',
@@ -183,7 +180,7 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
     )
 
 
-    get_nr_failed_test_row_run_ids = SimpleHttpOperator(
+    get_nr_failed_test_row_run_ids = HttpOperator(
         task_id='get_nr_failed_test_row_run_ids',
         http_conn_id=nr_insights_query,
         method='GET',
@@ -245,6 +242,10 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
 
             # Set team
             run['run_team'] = get_team_from_run(run)
+
+            # get duration
+            run['run_total_seconds'] = extract_time_components(run)
+
             processed_runs.append(run)
 
         return processed_runs
@@ -274,18 +275,25 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
                 continue 
 
             # Manifest contains all resources even if they were not run. This is how we can get the state of the project.
-            manifest_raw = get_dbt_cloud_manifest(run_id, dbt_cloud_default)
+            manifest_raw = get_dbt_cloud_manifest(run_id, dbt_cloud_admin_api)
+            
             manifest_filtered = get_dbt_cloud_manifest_filtered(manifest_raw)
+
             manifest = {resource['unique_id']: resource for resource in manifest_filtered}
 
             # Get run statuses 
-            query_list = read_config('dbt_discovery_queries.yml')
+            dbt_query_path = os.path.join(current_directory,'dbt_discovery_queries.yml')
+            query_list = read_config(dbt_query_path)
+            
             status_dict = get_dbt_cloud_run_results(job_id, run_id, dbt_cloud_discovery_api, query_list)
             statuses = status_dict['models'] + status_dict['snapshots'] + status_dict['seeds'] + status_dict['tests']
 
             resource_run_statuses = []
 
             for status in statuses:
+                if status['unique_id'] not in manifest: # check in case some runs don't have a manifest file
+                    print(f"key not found error: '{status['unique_id']}' not found in manifest for run_id: {run_id}")
+                    continue
                 resource_metadata = manifest[status['unique_id']]
                 status.update(resource_metadata)
                 status.update(run)
