@@ -14,8 +14,7 @@ An Airflow-based New Relic integration for dbt Cloud running with Snowflake. Col
 
 **Existing Airflow Environment:**
 * Ensure you have dbt Cloud and Snowflake Airflow providers
-* `pip install apache-airflow-providers-snowflake==3.0.0` 
-* `pip install apache-airflow-providers-dbt-cloud==3`
+* `pip install apache-airflow-providers-snowflake>=3.0.0` 
 * Copy the contents of airflow/dags/ to the root of your dags folder
 * Create the five connections below
 * Enable the new_relic_data_pipeline_observability_get_dbt_run_metadata2 DAG
