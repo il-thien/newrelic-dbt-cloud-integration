@@ -45,7 +45,11 @@ default_team = config['default_team']
     catchup=False,
     tags=[],
     max_active_runs=3,
-    schedule="5,15,25,35,45,55 * * * *"
+    schedule="5,15,25,35,45,55 * * * *",
+    default_args={
+        'retries': 3,
+        'retry_delay': pendulum.duration(seconds=30),
+    }
 )
 
 
