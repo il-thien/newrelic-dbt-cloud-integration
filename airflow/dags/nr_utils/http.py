@@ -2,16 +2,15 @@ import asyncio
 from airflow.providers.http.hooks.http import HttpAsyncHook
 
 
-
 async def run_in_loop(hook, data, headers):
-    response = await hook.run(data=data, headers=headers, extra_options={'compress': True})
+    response = await hook.run(json=data, headers=headers, extra_options={'compress': True})
     text_response = await response.text()
 
     return text_response
 
 
 def upload_data(records: list, http_conn_id: str, chunk_size=100) -> None:
-    hook = HttpAsyncHook(method='post', http_conn_id=http_conn_id)
+    hook = HttpAsyncHook(method='POST', http_conn_id=http_conn_id)
     api_key = hook.get_connection('nr_insights_insert').password
     headers = {"Api-Key": api_key, "Content-Type": "application/json"}
 

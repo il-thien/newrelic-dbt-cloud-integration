@@ -2,6 +2,7 @@ import re
 import os
 import yaml
 
+
 def flatten_dict(input_dict: dict, prefix: str) -> dict:
     # Flattens one level of a dict, sets data types and adds a prefix to field names
     max_string_length = 4096
@@ -42,6 +43,7 @@ def extract_time_components(run: dict) -> int:
         return total_seconds
     except ValueError:
         return None
+
 
 def read_config(file_name: str) -> dict:
         loc = os.path.dirname(__file__)
