@@ -1,17 +1,8 @@
 import uuid
 from airflow.providers.snowflake.hooks.snowflake import SnowflakeHook
-from nr_utils.nr_utils import flatten_dict,read_config
+from nr_utils.nr_utils import flatten_dict
 import time
-import os 
-
-
-
  
-current_directory = os.path.dirname(os.path.abspath(__file__))
-file_path = os.path.join(current_directory,'snowflake_config.yml')
-config = read_config(file_path)
-snowflake_role = config['snowflake_role']
-snowflake_warehouse = config['snowflake_warehouse']
 
 def get_failed_test_rows(failed_tests: list, snowflake_conn_id: str, max_retries: int = 3, retry_delay: int = 10) -> list:
     hook = SnowflakeHook(snowflake_conn_id=snowflake_conn_id)

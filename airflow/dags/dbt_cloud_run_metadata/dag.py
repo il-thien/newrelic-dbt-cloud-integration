@@ -38,7 +38,6 @@ snowflake_api =  connections['snowflake_api']
 default_team = config['default_team']
 
 
-
 @dag(
     start_date=pendulum.datetime(2024, 5, 29, tz="UTC"),
     # catchup=True,
@@ -56,13 +55,6 @@ default_team = config['default_team']
 def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
 
 
-    # Configurations
-    # MAX_STRING_LENGTH = 4096
-    
-    
-
-    
-    # TODO: Maybe switch to dbt_cloud_default API and build the endpoint with account and tenant
     get_dbt_runs = HttpOperator(
         task_id='get_dbt_runs',
         http_conn_id=dbt_cloud_admin_api,
@@ -116,7 +108,6 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
         response_check=dbt_cloud_validation,
         response_filter=dbt_cloud_secure_response_filter
     )
-
 
 
     # Get run ids already in NR1. This improves idempotency

@@ -2,8 +2,6 @@ import re
 from airflow.providers.http.hooks.http import HttpHook
 
 
-
-
 def dbt_cloud_validation(responses):
     for response in responses:
         if 'data' not in response.json() and isinstance(response.json()['data'], list):
@@ -27,6 +25,7 @@ def dbt_cloud_secure_response_filter(responses):
         for item in response.json()['data']:
             data[item['id']] = { 'id': item['id'], 'name': item['name'] }
     return data
+
 
 def paginate_dbt_cloud_api_response(response):
         payload = response.json()
@@ -75,8 +74,6 @@ def get_dbt_cloud_manifest_filtered(manifest: dict) -> dict:
     return fields
 
 
-
-
 def get_dbt_cloud_manifest(run_id: str, http_conn_id: str) -> dict:
     http_hook = HttpHook(http_conn_id=http_conn_id, method='GET')
     endpoint = f'/runs/{run_id}/artifacts/manifest.json'
@@ -96,8 +93,6 @@ def get_dbt_cloud_manifest(run_id: str, http_conn_id: str) -> dict:
         # Some jobs do not have a manifest. if the dbt command failed
         print(f'Could not retrieve manifest.json from dbt cloud for run_id: {run_id}. Exception: {e}')
         return {}
-
-
 
 
 def get_dbt_cloud_run_results(dbt_job_id: str, 
