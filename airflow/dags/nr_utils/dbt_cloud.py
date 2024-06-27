@@ -3,6 +3,7 @@ from airflow.providers.http.hooks.http import HttpHook
 
 
 def dbt_cloud_validation(responses):
+    # Validates the standard response from dbt Cloud API
     for response in responses:
         if 'data' not in response.json() and isinstance(response.json()['data'], list):
             print(f'Response from dbt cloud could not be parsed')
@@ -72,7 +73,6 @@ def get_dbt_cloud_manifest_filtered(manifest: dict) -> dict:
             'message': node_data.get('config', {}).get('meta',{}).get('nr_config',{}).get('message',''),
         })
     return fields
-
 
 def get_dbt_cloud_manifest(run_id: str, http_conn_id: str) -> dict:
     http_hook = HttpHook(http_conn_id=http_conn_id, method='GET')
