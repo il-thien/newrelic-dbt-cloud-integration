@@ -18,10 +18,14 @@ def flatten_dict(input_dict: dict, prefix: str) -> dict:
 
 
 def get_team_from_run(run: dict) -> str:
-    # Generates an arbitrary run_team for filtering in NRQL queries. The commented
-    # out code is what the New Relic enterprise data team uses. 
+    '''Allows us to provide our own logic to set run_team in dbt_job_run custom event. 
+       This function has access to all attributes returned in the dbt job run.
+        - projec_name
+        - environment_name
+        - All fields listed in the (dbt Cloud v2 API for runs)[https://docs.getdbt.com/dbt-cloud/api-v2#/operations/Retrieve%20Run]. 
+        - All attributes are prepended with "run_"'''
     team = 'Data Engineering' 
-    # if run['project_id'] == '96622' and run['environment_id'] in ['86490', '86130']:
+    # if run['project_id'] == '11111' and run['environment_id'] in ['22222', '33333']:
     #     team = 'Platform'
     # if re.match(r'Catch-all', run['job_name']):
     #     team = 'Project Catch All'
