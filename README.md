@@ -98,6 +98,11 @@ def get_team_from_run(run: dict) -> str:
     return team
 ```
 
+### Troubleshooting
+
+Different versions of Airflow combined with different versions of providers can induce breaking changes. In some cases, you may need to modify code to match the specific versions in your Airflow environment. We track known [issues](https://github.com/newrelic-experimental/newrelic-dbt-cloud-integration/issues) in this repository. 
+
+
 ### Dbt Project Configuration
 Within the Dbt project, we can use the meta config to set an additional team and test-specific settings.
 

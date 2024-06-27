@@ -1,0 +1,16 @@
+Test {{ tag.name }} failed
+
+Message: {{ tag.message }}
+
+Data:
+  {{ tag.field_1 }}
+  {{ tag.field_2 }}
+  {{ tag.field_3 }}
+  {{ tag.field_4 }}
+  {{ tag.field_5 }}
+  {{ tag.field_6 }}
+  {{ tag.field_7 }}
+  {{ tag.field_8 }}
+  {{ tag.field_9 }}
+  {{ tag.field_10 }}
+{{ tag.slack_mentions }}

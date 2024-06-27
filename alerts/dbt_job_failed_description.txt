@@ -1,0 +1,10 @@
+Dbt cloud job {{tag.job_name}} failed 
+
+Run Team: {{tag.run_team}} 
+Project: {{tag.project_name}} 
+Environment: {{tag.environment_name}} 
+Job: {{tag.job_name}} 
+Run started at: {{tag.run_started_at}} 
+Status: {{tag.run_status_humanized}} 
+Status message: {{tag.run_status_message}} 
+Link: {{tag.run_href}}
