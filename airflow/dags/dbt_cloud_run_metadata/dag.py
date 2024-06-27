@@ -26,6 +26,7 @@ from nr_utils.dbt_cloud import (
 )
 from nr_utils.http import upload_data
 
+
 current_directory = os.path.dirname(os.path.abspath(__file__))
 file_path = os.path.join(current_directory,'dag_config.yml')
 config = read_config(file_path)
@@ -39,8 +40,8 @@ default_team = config['default_team']
 
 
 @dag(
-    start_date=pendulum.datetime(2024, 5, 29, tz="UTC"),
-    # catchup=True,
+    # Set start_date and catchup=True to get historical data
+    start_date=pendulum.datetime(2024, 6, 10, tz="UTC"),
     catchup=False,
     tags=[],
     max_active_runs=3,
@@ -53,7 +54,6 @@ default_team = config['default_team']
 
 
 def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
-
 
     get_dbt_runs = HttpOperator(
         task_id='get_dbt_runs',

@@ -2,12 +2,13 @@ import uuid
 from airflow.providers.snowflake.hooks.snowflake import SnowflakeHook
 from nr_utils.nr_utils import flatten_dict
 import time
- 
+import os 
+
 
 def get_failed_test_rows(failed_tests: list, snowflake_conn_id: str, max_retries: int = 3, retry_delay: int = 10) -> list:
+    # Queries Snowflake with a failed test query
     hook = SnowflakeHook(snowflake_conn_id=snowflake_conn_id)
     failed_test_rows = []
-    
     for test in failed_tests:
         attempt = 0
         success = False
@@ -16,11 +17,12 @@ def get_failed_test_rows(failed_tests: list, snowflake_conn_id: str, max_retries
                 # Using the conn directly to avoid logging each row 
                 conn = hook.get_conn()
                 sql = test['compiled_sql']
+                failed_test_row_num = test['failed_test_row_limit']
                 print(f'Running sql for failed test {test["unique_id"]}: {sql}')
                 cursor = conn.cursor()
                 cursor.execute(sql)
                 columns = [column[0] for column in cursor.description]
-                results = cursor.fetchmany(10)
+                results = cursor.fetchmany(failed_test_row_num)
                 cursor.close()
                 conn.close()
                 for row in results:

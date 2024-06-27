@@ -1,0 +1,13 @@
+{{tag.resource_type}} {{tag.name}} failed with a warning 
+
+Team: {{tag.team}} 
+Run Team: {{tag.run_team}} 
+Project: {{tag.project_name}} 
+Environment: {{tag.environment_name}} 
+Job: {{tag.job_name}} 
+Resource name: {{tag.name}} 
+Status: {{tag.status}} 
+Error: {{tag.error}} 
+Link: {{tag.run_href}} 
+
+CC: {{tag.slack_mentions}}
