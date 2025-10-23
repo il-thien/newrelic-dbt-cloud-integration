@@ -52,6 +52,8 @@ query($accountId: Int!, $nrql: Nrql!) {
 }
 """
 
+NERDGRAPH_ENDPOINT = "https://api.newrelic.com/graphql"
+
 NERDGRAPH_PARAMS = {
     'account_id': NR_ACCOUNT_ID,
     'nerdgraph_query': NERDGRAPH_NRQL_QUERY,
@@ -183,7 +185,7 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
         task_id='get_nr_run_ids',
         http_conn_id=nr_insights_query,
         method='POST',
-        endpoint='graphql',
+        endpoint=NERDGRAPH_ENDPOINT,
         headers={
             'Content-Type': "application/json",
             'Accept': "application/json",
@@ -208,7 +210,7 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
         task_id='get_nr_resource_run_ids',
         http_conn_id=nr_insights_query,
         method='POST',
-        endpoint='graphql',
+        endpoint=NERDGRAPH_ENDPOINT,
         headers={
             'Content-Type': "application/json",
             'Accept': "application/json",
@@ -233,7 +235,7 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
         task_id='get_nr_failed_test_row_run_ids',
         http_conn_id=nr_insights_query,
         method='POST',
-        endpoint='graphql',
+        endpoint=NERDGRAPH_ENDPOINT,
         headers={
             'Content-Type': "application/json",
             'Accept': "application/json",
