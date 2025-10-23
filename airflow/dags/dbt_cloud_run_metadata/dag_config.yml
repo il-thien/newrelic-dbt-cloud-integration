@@ -5,4 +5,3 @@ connections:
   nr_insights_insert: nr_insights_insert
   snowflake_api: SNOWFLAKE 
 default_team: 'Data Engineering'
-

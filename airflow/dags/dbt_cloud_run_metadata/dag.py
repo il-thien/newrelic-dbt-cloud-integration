@@ -3,7 +3,7 @@ import pendulum
 import os
 import uuid
 from airflow.decorators import dag, task
-from airflow.models import XCom
+from airflow.models import XCom, Variable
 from airflow.utils.db import create_session
 from airflow.providers.http.operators.http import HttpOperator
 # Import utility functions
@@ -37,6 +37,42 @@ dbt_cloud_discovery_api =  connections['dbt_cloud_discovery_api']
 nr_insights_insert = connections['nr_insights_insert']
 snowflake_api =  connections['snowflake_api']
 default_team = config['default_team']
+
+NR_ACCOUNT_ID = int(Variable.get('nr_account_id'))
+
+NERDGRAPH_NRQL_QUERY = """
+query($accountId: Int!, $nrql: Nrql!) {
+  actor {
+    account(id: $accountId) {
+      nrql(query: $nrql) {
+        results
+      }
+    }
+  }
+}
+"""
+
+NERDGRAPH_PARAMS = {
+    'account_id': NR_ACCOUNT_ID,
+    'nerdgraph_query': NERDGRAPH_NRQL_QUERY,
+}
+
+
+def nerdgraph_members_response_filter(response):
+    payload = response.json()
+    errors = payload.get('errors')
+    if errors:
+        raise ValueError(f"NerdGraph returned errors: {errors}")
+    account_data = (
+        payload.get('data', {})
+        .get('actor', {})
+        .get('account', {})
+    )
+    nrql_data = account_data.get('nrql', {})
+    results = nrql_data.get('results', [])
+    if results and isinstance(results[0], dict):
+        return results[0].get('members', [])
+    return []
 
 
 @dag(
@@ -146,48 +182,75 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
     get_nr_run_ids = HttpOperator(
         task_id='get_nr_run_ids',
         http_conn_id=nr_insights_query,
-        method='GET',
-        headers = {
-            'X-Query-Key': '{{ conn.nr_insights_query.password}}',
+        method='POST',
+        endpoint='graphql',
+        headers={
+            'Content-Type': "application/json",
             'Accept': "application/json",
+            'API-Key': '{{ conn.nr_insights_query.password}}',
         },
-        data={
-            'nrql': "{{ task_instance.xcom_pull(task_ids='get_nrql_queries', key='run_query')}}", 
-        },
+        data="""
+        {
+            "query": {{ params.nerdgraph_query | tojson }},
+            "variables": {
+                "accountId": {{ params.account_id }},
+                "nrql": {{ task_instance.xcom_pull(task_ids='get_nrql_queries', key='run_query') | tojson }}
+            }
+        }
+        """,
+        params=NERDGRAPH_PARAMS,
         do_xcom_push=True,
-        response_filter=lambda response: response.json()['results'][0]['members'],
+        response_filter=nerdgraph_members_response_filter,
     )
  
 
     get_nr_resource_run_ids = HttpOperator(
         task_id='get_nr_resource_run_ids',
         http_conn_id=nr_insights_query,
-        method='GET',
-        headers = {
-            'X-Query-Key': '{{ conn.nr_insights_query.password}}',
+        method='POST',
+        endpoint='graphql',
+        headers={
+            'Content-Type': "application/json",
             'Accept': "application/json",
+            'API-Key': '{{ conn.nr_insights_query.password}}',
         },
-        data={
-            'nrql': "{{ task_instance.xcom_pull(task_ids='get_nrql_queries', key='resource_run_query')}}", 
-        },
+        data="""
+        {
+            "query": {{ params.nerdgraph_query | tojson }},
+            "variables": {
+                "accountId": {{ params.account_id }},
+                "nrql": {{ task_instance.xcom_pull(task_ids='get_nrql_queries', key='resource_run_query') | tojson }}
+            }
+        }
+        """,
+        params=NERDGRAPH_PARAMS,
         do_xcom_push=True,
-        response_filter=lambda response: response.json()['results'][0]['members'],
+        response_filter=nerdgraph_members_response_filter,
     )
 
 
     get_nr_failed_test_row_run_ids = HttpOperator(
         task_id='get_nr_failed_test_row_run_ids',
         http_conn_id=nr_insights_query,
-        method='GET',
-        headers = {
-            'X-Query-Key': '{{ conn.nr_insights_query.password}}',
+        method='POST',
+        endpoint='graphql',
+        headers={
+            'Content-Type': "application/json",
             'Accept': "application/json",
+            'API-Key': '{{ conn.nr_insights_query.password}}',
         },
-        data={
-            'nrql': "{{ task_instance.xcom_pull(task_ids='get_nrql_queries', key='failed_test_row_query')}}", 
-        },
+        data="""
+        {
+            "query": {{ params.nerdgraph_query | tojson }},
+            "variables": {
+                "accountId": {{ params.account_id }},
+                "nrql": {{ task_instance.xcom_pull(task_ids='get_nrql_queries', key='failed_test_row_query') | tojson }}
+            }
+        }
+        """,
+        params=NERDGRAPH_PARAMS,
         do_xcom_push=True,
-        response_filter=lambda response: response.json()['results'][0]['members'],
+        response_filter=nerdgraph_members_response_filter,
     )
 
 
