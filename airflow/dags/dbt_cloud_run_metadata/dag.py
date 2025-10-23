@@ -2,10 +2,12 @@
 import pendulum
 import os
 import uuid
+import requests
 from airflow.decorators import dag, task
 from airflow.models import XCom, Variable
 from airflow.utils.db import create_session
 from airflow.providers.http.operators.http import HttpOperator
+from airflow.hooks.base import BaseHook
 # Import utility functions
 from nr_utils.snowflake import get_failed_test_rows
 from nr_utils.nr_utils import (
@@ -54,10 +56,24 @@ query($accountId: Int!, $nrql: Nrql!) {
 
 NERDGRAPH_ENDPOINT = "https://api.newrelic.com/graphql"
 
-NERDGRAPH_PARAMS = {
-    'account_id': NR_ACCOUNT_ID,
-    'nerdgraph_query': NERDGRAPH_NRQL_QUERY,
-}
+
+def execute_nerdgraph_nrql_query(nrql_query):
+    conn = BaseHook.get_connection(nr_insights_query)
+    headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'API-Key': conn.password,
+    }
+    payload = {
+        'query': NERDGRAPH_NRQL_QUERY,
+        'variables': {
+            'accountId': NR_ACCOUNT_ID,
+            'nrql': nrql_query,
+        },
+    }
+    response = requests.post(NERDGRAPH_ENDPOINT, json=payload, headers=headers, timeout=30)
+    response.raise_for_status()
+    return nerdgraph_members_response_filter(response)
 
 
 def nerdgraph_members_response_filter(response):
@@ -181,79 +197,19 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
         return queries 
     
 
-    get_nr_run_ids = HttpOperator(
-        task_id='get_nr_run_ids',
-        http_conn_id=nr_insights_query,
-        method='POST',
-        endpoint=NERDGRAPH_ENDPOINT,
-        headers={
-            'Content-Type': "application/json",
-            'Accept': "application/json",
-            'API-Key': '{{ conn.nr_insights_query.password}}',
-        },
-        data="""
-        {
-            "query": {{ params.nerdgraph_query | tojson }},
-            "variables": {
-                "accountId": {{ params.account_id }},
-                "nrql": {{ task_instance.xcom_pull(task_ids='get_nrql_queries', key='run_query') | tojson }}
-            }
-        }
-        """,
-        params=NERDGRAPH_PARAMS,
-        do_xcom_push=True,
-        response_filter=nerdgraph_members_response_filter,
-    )
+    @task
+    def get_nr_run_ids(nrql_query):
+        return execute_nerdgraph_nrql_query(nrql_query)
  
 
-    get_nr_resource_run_ids = HttpOperator(
-        task_id='get_nr_resource_run_ids',
-        http_conn_id=nr_insights_query,
-        method='POST',
-        endpoint=NERDGRAPH_ENDPOINT,
-        headers={
-            'Content-Type': "application/json",
-            'Accept': "application/json",
-            'API-Key': '{{ conn.nr_insights_query.password}}',
-        },
-        data="""
-        {
-            "query": {{ params.nerdgraph_query | tojson }},
-            "variables": {
-                "accountId": {{ params.account_id }},
-                "nrql": {{ task_instance.xcom_pull(task_ids='get_nrql_queries', key='resource_run_query') | tojson }}
-            }
-        }
-        """,
-        params=NERDGRAPH_PARAMS,
-        do_xcom_push=True,
-        response_filter=nerdgraph_members_response_filter,
-    )
+    @task
+    def get_nr_resource_run_ids(nrql_query):
+        return execute_nerdgraph_nrql_query(nrql_query)
 
 
-    get_nr_failed_test_row_run_ids = HttpOperator(
-        task_id='get_nr_failed_test_row_run_ids',
-        http_conn_id=nr_insights_query,
-        method='POST',
-        endpoint=NERDGRAPH_ENDPOINT,
-        headers={
-            'Content-Type': "application/json",
-            'Accept': "application/json",
-            'API-Key': '{{ conn.nr_insights_query.password}}',
-        },
-        data="""
-        {
-            "query": {{ params.nerdgraph_query | tojson }},
-            "variables": {
-                "accountId": {{ params.account_id }},
-                "nrql": {{ task_instance.xcom_pull(task_ids='get_nrql_queries', key='failed_test_row_query') | tojson }}
-            }
-        }
-        """,
-        params=NERDGRAPH_PARAMS,
-        do_xcom_push=True,
-        response_filter=nerdgraph_members_response_filter,
-    )
+    @task
+    def get_nr_failed_test_row_run_ids(nrql_query):
+        return execute_nerdgraph_nrql_query(nrql_query)
 
 
     # Compare runs from dbt cloud to run ids already in New Relic
@@ -412,10 +368,10 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
     dbt_runs_enriched = enrich_runs(dbt_runs, dbt_projects, dbt_environments)
 
     # Get run ids to proces for runs, resource runs, and failed test runs
-    nr_run_query = get_nrql_queries(dbt_runs_enriched)
-    nr_runs = get_nr_run_ids.output['return_value']
-    nr_resource_runs = get_nr_resource_run_ids.output['return_value']
-    nr_failed_test_row_runs = get_nr_failed_test_row_run_ids.output['return_value']
+    nr_run_queries = get_nrql_queries(dbt_runs_enriched)
+    nr_runs = get_nr_run_ids(nr_run_queries['run_query'])
+    nr_resource_runs = get_nr_resource_run_ids(nr_run_queries['resource_run_query'])
+    nr_failed_test_row_runs = get_nr_failed_test_row_run_ids(nr_run_queries['failed_test_row_query'])
     runs_to_process = get_runs_to_process(dbt_runs_enriched, nr_runs, nr_resource_runs, nr_failed_test_row_runs)
 
     # Process runs
@@ -431,8 +387,5 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
 
     # Cleanup xcoms
     cleanup_xcom(failed_test_rows)
-
-    # Set operator dependencies that are not automatically set by task flow
-    nr_run_query >> [nr_runs, nr_resource_runs, nr_failed_test_row_runs] 
 
 new_relic_data_pipeline_observability_get_dbt_run_metadata2()
