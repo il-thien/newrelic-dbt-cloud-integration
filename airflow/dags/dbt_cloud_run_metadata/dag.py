@@ -397,8 +397,12 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
             # Log the initial data state
             print(f"DEBUG: Initial dbt_runs count={len(dbt_runs_data)} sample_ids={[r.get('run_id') for r in dbt_runs_data[:5]] if dbt_runs_data else []}")
             
-            # Perform enrichment
-            enriched_runs = enrich_runs(dbt_runs_data, dbt_projects_data, dbt_environments_data)
+            # Perform enrichment with proper type handling
+            enriched_runs = enrich_runs(
+                dbt_runs_data if isinstance(dbt_runs_data, list) else [],
+                dbt_projects_data if isinstance(dbt_projects_data, dict) else {},
+                dbt_environments_data if isinstance(dbt_environments_data, dict) else {}
+            )
             
             # Validate and log the enriched data
             if not isinstance(enriched_runs, list):
@@ -408,17 +412,21 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
             print(f"DEBUG: Enriched runs count={len(enriched_runs)} sample_ids={[r.get('run_id') for r in enriched_runs[:5]] if enriched_runs else []}")
             return enriched_runs
             
-            except Exception as e:
-                print(f"ERROR in process_dbt_data: {str(e)}")
-                raise
+        except Exception as e:
+            print(f"ERROR in process_dbt_data: {str(e)}")
+            raise
             
-    # Chain the tasks together
+    # Chain the tasks together with proper XCom handling
     raw_data = get_dbt_data()
     dbt_runs_enriched = process_dbt_data(raw_data)
-
+    
     @task
     def process_nrql_data(enriched_runs):
         """Process NRQL queries and prepare data for upload."""
+        # Ensure enriched_runs is a list
+        if not isinstance(enriched_runs, list):
+            print(f"WARNING: enriched_runs in process_nrql_data is not a list, got type={type(enriched_runs)}")
+            enriched_runs = []
         try:
             # Get queries
             nr_run_queries = get_nrql_queries(enriched_runs)            # Get NR data
