@@ -2,12 +2,10 @@
 import pendulum
 import os
 import uuid
-import requests
 from airflow.decorators import dag, task
 from airflow.models import XCom, Variable
 from airflow.utils.db import create_session
 from airflow.providers.http.operators.http import HttpOperator
-from airflow.hooks.base import BaseHook
 # Import utility functions
 from nr_utils.snowflake import get_failed_test_rows
 from nr_utils.nr_utils import (
@@ -15,7 +13,7 @@ from nr_utils.nr_utils import (
     get_team_from_run,
     extract_time_components,
     read_config
-    
+
 )
 from nr_utils.dbt_cloud import (
     dbt_cloud_response_filter,
@@ -34,62 +32,27 @@ file_path = os.path.join(current_directory,'dag_config.yml')
 config = read_config(file_path)
 connections = config['connections']
 dbt_cloud_admin_api = connections['dbt_cloud_admin_api']
-nr_insights_query = connections['nr_insights_query'] 
-dbt_cloud_discovery_api =  connections['dbt_cloud_discovery_api'] 
+nr_insights_query = connections['nr_insights_query']
+dbt_cloud_discovery_api =  connections['dbt_cloud_discovery_api']
 nr_insights_insert = connections['nr_insights_insert']
 snowflake_api =  connections['snowflake_api']
 default_team = config['default_team']
+# New Relic account id used for NerdGraph queries.
+# Prefer Airflow Variable 'new_relic_account_id', then dag_config.yml, then environment variable NEW_RELIC_ACCOUNT_ID.
+nr_account_id = None
+try:
+    nr_account_id = Variable.get('new_relic_account_id', default_var=None)
+except Exception:
+    # Variable may not be available in some contexts; ignore and try other sources
+    nr_account_id = None
 
-NR_ACCOUNT_ID = int(Variable.get('nr_account_id'))
+if not nr_account_id:
+    nr_account_id = config.get('new_relic_account_id') or os.environ.get('NEW_RELIC_ACCOUNT_ID')
 
-NERDGRAPH_NRQL_QUERY = """
-query($accountId: Int!, $nrql: Nrql!) {
-  actor {
-    account(id: $accountId) {
-      nrql(query: $nrql) {
-        results
-      }
-    }
-  }
-}
-"""
+if not nr_account_id:
+    raise Exception("Missing New Relic account id. Set Airflow Variable 'new_relic_account_id', add 'new_relic_account_id' to dag_config.yml, or set NEW_RELIC_ACCOUNT_ID environment variable")
 
-
-def execute_nerdgraph_nrql_query(nrql_query):
-    conn = BaseHook.get_connection(nr_insights_query)
-    nerdgraph_endpoint = conn.host or "https://api.newrelic.com/graphql"  # Fallback to default if not set
-    headers = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'API-Key': conn.password,
-    }
-    payload = {
-        'query': NERDGRAPH_NRQL_QUERY,
-        'variables': {
-            'accountId': NR_ACCOUNT_ID,
-            'nrql': nrql_query,
-        },
-    }
-    response = requests.post(nerdgraph_endpoint, json=payload, headers=headers, timeout=30)
-    response.raise_for_status()
-    return nerdgraph_members_response_filter(response)
-
-
-def nerdgraph_members_response_filter(response):
-    payload = response.json()
-    errors = payload.get('errors')
-    if errors:
-        raise ValueError(f"NerdGraph returned errors: {errors}")
-    account_data = (
-        payload.get('data', {})
-        .get('actor', {})
-        .get('account', {})
-    )
-    nrql_data = account_data.get('nrql', {})
-    results = nrql_data.get('results', [])
-    if results and isinstance(results[0], dict):
-        return results[0].get('members', [])
-    return []
+nr_account_id = int(nr_account_id)
 
 
 @dag(
@@ -193,22 +156,70 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
             'failed_test_row_query': failed_test_row_query
         }
         print(f'NR Run id query: {queries}')
-        return queries 
-    
-
-    @task
-    def get_nr_run_ids(nrql_query):
-        return execute_nerdgraph_nrql_query(nrql_query)
+        return queries
 
 
-    @task
-    def get_nr_resource_run_ids(nrql_query):
-        return execute_nerdgraph_nrql_query(nrql_query)
+    get_nr_run_ids = HttpOperator(
+        task_id='get_nr_run_ids',
+        http_conn_id=nr_insights_query,
+    method='POST',
+    endpoint='/graphql',
+        headers = {
+            'Content-Type': 'application/json',
+            'API-Key': '{{ conn.nr_insights_query.password}}',
+        },
+        data={
+            'query': 'query($accountId:Int!,$nrql:String!){ actor{ account(id:$accountId){ nrql(query:$nrql){ results } } } }',
+            'variables': {
+                'accountId': nr_account_id,
+                'nrql': "{{ task_instance.xcom_pull(task_ids='get_nrql_queries', key='run_query')}}",
+            },
+        },
+        do_xcom_push=True,
+        response_filter=lambda response: response.json()['data']['actor']['account']['nrql']['results'][0]['members'],
+    )
 
 
-    @task
-    def get_nr_failed_test_row_run_ids(nrql_query):
-        return execute_nerdgraph_nrql_query(nrql_query)
+    get_nr_resource_run_ids = HttpOperator(
+        task_id='get_nr_resource_run_ids',
+        http_conn_id=nr_insights_query,
+    method='POST',
+    endpoint='/graphql',
+        headers = {
+            'Content-Type': 'application/json',
+            'API-Key': '{{ conn.nr_insights_query.password}}',
+        },
+        data={
+            'query': 'query($accountId:Int!,$nrql:String!){ actor{ account(id:$accountId){ nrql(query:$nrql){ results } } } }',
+            'variables': {
+                'accountId': nr_account_id,
+                'nrql': "{{ task_instance.xcom_pull(task_ids='get_nrql_queries', key='resource_run_query')}}",
+            },
+        },
+        do_xcom_push=True,
+        response_filter=lambda response: response.json()['data']['actor']['account']['nrql']['results'][0]['members'],
+    )
+
+
+    get_nr_failed_test_row_run_ids = HttpOperator(
+        task_id='get_nr_failed_test_row_run_ids',
+        http_conn_id=nr_insights_query,
+    method='POST',
+    endpoint='/graphql',
+        headers = {
+            'Content-Type': 'application/json',
+            'API-Key': '{{ conn.nr_insights_query.password}}',
+        },
+        data={
+            'query': 'query($accountId:Int!,$nrql:String!){ actor{ account(id:$accountId){ nrql(query:$nrql){ results } } } }',
+            'variables': {
+                'accountId': nr_account_id,
+                'nrql': "{{ task_instance.xcom_pull(task_ids='get_nrql_queries', key='failed_test_row_query')}}",
+            },
+        },
+        do_xcom_push=True,
+        response_filter=lambda response: response.json()['data']['actor']['account']['nrql']['results'][0]['members'],
+    )
 
 
     # Compare runs from dbt cloud to run ids already in New Relic
@@ -225,11 +236,11 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
         return result
 
 
-    @task 
+    @task
     def enrich_runs(runs_to_process, projects, environments):
         processed_runs = []
         for raw_run in runs_to_process:
-            # Add job information 
+            # Add job information
             job = flatten_dict(raw_run['job'], 'job_')
             run = flatten_dict(raw_run, 'run_')
             run.update(job)
@@ -240,10 +251,10 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
             environment_flat = flatten_dict(environment, 'environment_')
             run.update(environment_flat)
             del(run['run_environment_id'])
-            
+
             # Add in project
             project = projects[run['run_project_id']]
-            project_flat = flatten_dict(project, 'project_') 
+            project_flat = flatten_dict(project, 'project_')
             run.update(project_flat)
             del(run['run_project_id'])
 
@@ -266,10 +277,10 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
         return processed_runs
 
 
-    @task 
+    @task
     def process_runs(runs):
         if runs:
-            print(f'Sending {len(runs)} to New Relic') 
+            print(f'Sending {len(runs)} to New Relic')
             print(f'Run ids: {[run["run_id"] for run in runs]}')
             upload_data(runs, nr_insights_insert, chunk_size=500)
         else:
@@ -287,19 +298,19 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
             # Get run metadata
             if run['run_status'] not in (10, 20):
                 print(f'Run {run["run_id"]} did not complete. Not getting models and tests')
-                continue 
+                continue
 
             # Manifest contains all resources even if they were not run. This is how we can get the state of the project.
             manifest_raw = get_dbt_cloud_manifest(run_id, dbt_cloud_admin_api)
-            
+
             manifest_filtered = get_dbt_cloud_manifest_filtered(manifest_raw)
 
             manifest = {resource['unique_id']: resource for resource in manifest_filtered}
 
-            # Get run statuses 
+            # Get run statuses
             dbt_query_path = os.path.join(current_directory,'dbt_discovery_queries.yml')
             query_list = read_config(dbt_query_path)
-            
+
             status_dict = get_dbt_cloud_run_results(job_id, run_id, dbt_cloud_discovery_api, query_list)
             statuses = status_dict['models'] + status_dict['snapshots'] + status_dict['seeds'] + status_dict['tests']
 
@@ -314,7 +325,7 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
                 status.update(run)
                 status['eventType'] = 'dbt_resource_run'
                 status['entity_name'] = f'{status["alias"]} - {status["run_created_at"]}'
-                status['entity_id'] = f'{uuid.uuid4()}' 
+                status['entity_id'] = f'{uuid.uuid4()}'
                 status['dbt_source'] = 'Dbt Cloud'
                 # Save failed tests that need failed test row processing
                 if status['status'] in ('warn', 'fail') and status['alert_failed_test_rows']:
@@ -322,7 +333,7 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
                 resource_run_statuses.append(flatten_dict(status, ''))
 
             if resource_run_statuses:
-                print(f'Sending {len(resource_run_statuses)} resource runs') 
+                print(f'Sending {len(resource_run_statuses)} resource runs')
                 upload_data(resource_run_statuses, nr_insights_insert, chunk_size=500)
                 print(f'Send complete')
 
@@ -333,7 +344,7 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
         }
 
 
-    @task 
+    @task
     def process_failed_test_rows(failed_tests, failed_test_runs):
         if failed_tests and failed_test_runs:
             # See if we already processed the failed tests
@@ -343,10 +354,10 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
             print(f'Sending {len(failed_test_rows)} failed test rows')
             upload_data(failed_test_rows, nr_insights_insert, chunk_size=500)
         else:
-            print('No failed tests to get failed test rows for') 
+            print('No failed tests to get failed test rows for')
 
-        print(f'Send failed test rows complete')
-        return 'Process failed test rows complete' 
+        print('Send failed test rows complete')
+        return 'Process failed test rows complete'
 
 
     @task
@@ -360,130 +371,34 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
         print(f'Dag Xcoms deleted')
 
     # Using a combination of taskflow and operators. Task flow automatically handles task dependencies in the DAG
-    @task
-    def get_dbt_data():
-        """Get and validate the raw data from dbt operators."""
-        try:
-            # Get raw outputs
-            projects_output = get_dbt_projects.output
-            environments_output = get_dbt_environments.output
-            runs_output = get_dbt_runs.output
+    # Get run data
+    dbt_projects = get_dbt_projects.output['return_value']
+    dbt_environments = get_dbt_environments.output['return_value']
+    dbt_runs = get_dbt_runs.output['return_value']
+    dbt_runs_enriched = enrich_runs(dbt_runs, dbt_projects, dbt_environments)
 
-            # Function to safely extract XCom data
-            def extract_xcom_value(xcom_data, default_value):
-                if hasattr(xcom_data, 'get'):
-                    return xcom_data.get('return_value', default_value)
-                return default_value
+    # Get run ids to proces for runs, resource runs, and failed test runs
+    nr_run_query = get_nrql_queries(dbt_runs_enriched)
+    nr_runs = get_nr_run_ids.output['return_value']
+    nr_resource_runs = get_nr_resource_run_ids.output['return_value']
+    nr_failed_test_row_runs = get_nr_failed_test_row_run_ids.output['return_value']
+    runs_to_process = get_runs_to_process(dbt_runs_enriched, nr_runs, nr_resource_runs, nr_failed_test_row_runs)
 
-            # Extract data safely
-            return {
-                'projects': extract_xcom_value(projects_output, {}),
-                'environments': extract_xcom_value(environments_output, {}),
-                'runs': extract_xcom_value(runs_output, [])
-            }
-        except Exception as e:
-            print(f"ERROR in get_dbt_data: {str(e)}")
-            raise
-
-    @task
-    def process_dbt_data(raw_data):
-        """Process and enrich the dbt data."""
-        try:
-            # Get the data from the dictionary with type checking
-            dbt_runs_data = raw_data.get('runs', []) if isinstance(raw_data, dict) else []
-            dbt_projects_data = raw_data.get('projects', {}) if isinstance(raw_data, dict) else {}
-            dbt_environments_data = raw_data.get('environments', {}) if isinstance(raw_data, dict) else {}
-            
-            # Log the initial data state
-            print(f"DEBUG: Initial dbt_runs count={len(dbt_runs_data)} sample_ids={[r.get('run_id') for r in dbt_runs_data[:5]] if dbt_runs_data else []}")
-            
-            # Perform enrichment
-            enriched_runs = enrich_runs(dbt_runs_data, dbt_projects_data, dbt_environments_data)
-            
-            # Validate and log the enriched data
-            if not isinstance(enriched_runs, list):
-                print(f"WARNING: enriched_runs is not a list, got type={type(enriched_runs)}")
-                enriched_runs = []
-            
-            print(f"DEBUG: Enriched runs count={len(enriched_runs)} sample_ids={[r.get('run_id') for r in enriched_runs[:5]] if enriched_runs else []}")
-            return enriched_runs
-        except Exception as e:
-            print(f"ERROR in process_dbt_data: {str(e)}")
-            raise
-            
-    # Chain the tasks together
-    raw_data = get_dbt_data()
-    dbt_runs_enriched = process_dbt_data(raw_data)
-
-    @task
-    def process_nrql_data(enriched_runs):
-        """Process NRQL queries and prepare data for upload."""
-        try:
-            # Ensure enriched_runs is a list
-            if not isinstance(enriched_runs, list):
-                print(f"WARNING: enriched_runs in process_nrql_data is not a list, got type={type(enriched_runs)}")
-                enriched_runs = []
-            
-            # Get queries
-            nr_run_queries = get_nrql_queries(enriched_runs)
-            nr_runs = get_nr_run_ids(nr_run_queries['run_query'])
-            nr_resource_runs = get_nr_resource_run_ids(nr_run_queries['resource_run_query'])
-            nr_failed_test_row_runs = get_nr_failed_test_row_run_ids(nr_run_queries['failed_test_row_query'])
-            
-            # Process runs
-            runs_to_process = get_runs_to_process(enriched_runs, nr_runs, nr_resource_runs, nr_failed_test_row_runs)
-            
-            # Log processing stats
-            if isinstance(runs_to_process, dict):
-                print(f"DEBUG: runs_to_process['runs_to_process'] count={len(runs_to_process['runs_to_process'])} "
-                      f"sample_ids={[r.get('run_id') for r in runs_to_process['runs_to_process'][:5]] if runs_to_process['runs_to_process'] else []}")
-                print(f"DEBUG: runs_to_process['resource_runs_to_process'] count={len(runs_to_process['resource_runs_to_process'])} "
-                      f"sample_ids={[r.get('run_id') for r in runs_to_process['resource_runs_to_process'][:5]] if runs_to_process['resource_runs_to_process'] else []}")
-                print(f"DEBUG: runs_to_process['failed_test_runs_to_process'] count={len(runs_to_process['failed_test_runs_to_process'])} "
-                      f"sample_ids={runs_to_process['failed_test_runs_to_process'][:5] if runs_to_process['failed_test_runs_to_process'] else []}")
-            
-            return runs_to_process
-        except Exception as e:
-            print(f"ERROR in process_nrql_data: {str(e)}")
-            raise
-        try:
-            # Get queries
-            nr_run_queries = get_nrql_queries(enriched_runs)            # Get NR data
-            nr_runs = get_nr_run_ids(nr_run_queries['run_query'])
-            nr_resource_runs = get_nr_resource_run_ids(nr_run_queries['resource_run_query'])
-            nr_failed_test_row_runs = get_nr_failed_test_row_run_ids(nr_run_queries['failed_test_row_query'])
-            
-            # Process runs
-            runs_to_process = get_runs_to_process(enriched_runs, nr_runs, nr_resource_runs, nr_failed_test_row_runs)
-            
-            # Log processing stats
-            if isinstance(runs_to_process, dict):
-                print(f"DEBUG: runs_to_process['runs_to_process'] count={len(runs_to_process['runs_to_process'])} "
-                      f"sample_ids={[r.get('run_id') for r in runs_to_process['runs_to_process'][:5]] if runs_to_process['runs_to_process'] else []}")
-                print(f"DEBUG: runs_to_process['resource_runs_to_process'] count={len(runs_to_process['resource_runs_to_process'])} "
-                      f"sample_ids={[r.get('run_id') for r in runs_to_process['resource_runs_to_process'][:5]] if runs_to_process['resource_runs_to_process'] else []}")
-                print(f"DEBUG: runs_to_process['failed_test_runs_to_process'] count={len(runs_to_process['failed_test_runs_to_process'])} "
-                      f"sample_ids={runs_to_process['failed_test_runs_to_process'][:5] if runs_to_process['failed_test_runs_to_process'] else []}")
-            
-            return runs_to_process
-            
-        except Exception as e:
-            print(f"ERROR in process_nrql_data: {str(e)}")
-            raise
-
-    # Process NRQL data in a task
-    runs_data = process_nrql_data(dbt_runs_enriched)
-    process_runs(runs_data['runs_to_process'])
+    # Process runs
+    processed_runs = process_runs(runs_to_process['runs_to_process'])
 
     failed_tests = process_resource_runs(
-        runs_data['resource_runs_to_process'],
-        runs_data['failed_test_runs_to_process'])
+        runs_to_process['resource_runs_to_process'],
+        runs_to_process['failed_test_runs_to_process'])
 
     failed_test_rows = process_failed_test_rows(
-        failed_tests['failed_tests'], 
+        failed_tests['failed_tests'],
         failed_tests['failed_test_runs'])
 
     # Cleanup xcoms
     cleanup_xcom(failed_test_rows)
+
+    # Set operator dependencies that are not automatically set by task flow
+    nr_run_query >> [nr_runs, nr_resource_runs, nr_failed_test_row_runs]
 
 new_relic_data_pipeline_observability_get_dbt_run_metadata2()
