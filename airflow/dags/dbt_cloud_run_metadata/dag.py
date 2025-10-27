@@ -361,49 +361,67 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
 
     # Using a combination of taskflow and operators. Task flow automatically handles task dependencies in the DAG
     @task
-    def process_operator_data():
-        # Get outputs from operators and extract values
+    def get_dbt_data():
+        """Get and validate the raw data from dbt operators."""
         try:
-            dbt_projects = get_dbt_projects.output
-            dbt_environments = get_dbt_environments.output
-            dbt_runs = get_dbt_runs.output
-            
-            # Extract data with proper type checking
-            dbt_projects_data = dbt_projects['return_value'] if isinstance(dbt_projects, dict) else {}
-            dbt_environments_data = dbt_environments['return_value'] if isinstance(dbt_environments, dict) else {}
-            dbt_runs_data = dbt_runs['return_value'] if isinstance(dbt_runs, dict) else []
+            # Get raw outputs
+            projects_output = get_dbt_projects.output
+            environments_output = get_dbt_environments.output
+            runs_output = get_dbt_runs.output
+
+            # Function to safely extract XCom data
+            def extract_xcom_value(xcom_data, default_value):
+                if hasattr(xcom_data, 'get'):
+                    return xcom_data.get('return_value', default_value)
+                return default_value
+
+            # Extract data safely
+            return {
+                'projects': extract_xcom_value(projects_output, {}),
+                'environments': extract_xcom_value(environments_output, {}),
+                'runs': extract_xcom_value(runs_output, [])
+            }
+        except Exception as e:
+            print(f"ERROR in get_dbt_data: {str(e)}")
+            raise
+
+    @task
+    def process_dbt_data(raw_data):
+        """Process and enrich the dbt data."""
+        try:
+            # Get the data from the dictionary
+            dbt_runs_data = raw_data['runs']
+            dbt_projects_data = raw_data['projects']
+            dbt_environments_data = raw_data['environments']
             
             # Log the initial data state
-            if isinstance(dbt_runs_data, list):
-                print(f"DEBUG: Initial dbt_runs count={len(dbt_runs_data)} sample_ids={[r.get('run_id') for r in dbt_runs_data[:5]] if dbt_runs_data else []}")
-            else:
-                print(f"DEBUG: dbt_runs_data is not a list, type={type(dbt_runs_data)}")
+            print(f"DEBUG: Initial dbt_runs count={len(dbt_runs_data)} sample_ids={[r.get('run_id') for r in dbt_runs_data[:5]] if dbt_runs_data else []}")
             
             # Perform enrichment
             enriched_runs = enrich_runs(dbt_runs_data, dbt_projects_data, dbt_environments_data)
             
-            # Log the enriched data state
-            if isinstance(enriched_runs, list):
-                print(f"DEBUG: Enriched runs count={len(enriched_runs)} sample_ids={[r.get('run_id') for r in enriched_runs[:5]] if enriched_runs else []}")
-            else:
-                print(f"DEBUG: enriched_runs is not a list, type={type(enriched_runs)}")
+            # Validate and log the enriched data
+            if not isinstance(enriched_runs, list):
+                print(f"WARNING: enriched_runs is not a list, got type={type(enriched_runs)}")
+                enriched_runs = []
             
+            print(f"DEBUG: Enriched runs count={len(enriched_runs)} sample_ids={[r.get('run_id') for r in enriched_runs[:5]] if enriched_runs else []}")
             return enriched_runs
             
-        except Exception as e:
-            print(f"ERROR in process_operator_data: {str(e)}")
-            raise
-    
-    # Process data in a single task
-    dbt_runs_enriched = process_operator_data()
+            except Exception as e:
+                print(f"ERROR in process_dbt_data: {str(e)}")
+                raise
+            
+    # Chain the tasks together
+    raw_data = get_dbt_data()
+    dbt_runs_enriched = process_dbt_data(raw_data)
 
     @task
     def process_nrql_data(enriched_runs):
+        """Process NRQL queries and prepare data for upload."""
         try:
             # Get queries
-            nr_run_queries = get_nrql_queries(enriched_runs)
-            
-            # Get NR data
+            nr_run_queries = get_nrql_queries(enriched_runs)            # Get NR data
             nr_runs = get_nr_run_ids(nr_run_queries['run_query'])
             nr_resource_runs = get_nr_resource_run_ids(nr_run_queries['resource_run_query'])
             nr_failed_test_row_runs = get_nr_failed_test_row_run_ids(nr_run_queries['failed_test_row_query'])
