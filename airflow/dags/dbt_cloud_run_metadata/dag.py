@@ -360,25 +360,51 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
         print(f'Dag Xcoms deleted')
 
     # Using a combination of taskflow and operators. Task flow automatically handles task dependencies in the DAG
-    # Get run data 
-    dbt_projects = get_dbt_projects.output
-    dbt_environments = get_dbt_environments.output
-    dbt_runs = get_dbt_runs.output
+    # Get run data and extract from XCom
+    @task
+    def extract_operator_data():
+        # Get outputs from operators
+        dbt_projects = get_dbt_projects.output
+        dbt_environments = get_dbt_environments.output
+        dbt_runs = get_dbt_runs.output
+        
+        # Extract actual values, with safe fallbacks
+        dbt_projects_data = dbt_projects.get('return_value', {}) if isinstance(dbt_projects, dict) else {}
+        dbt_environments_data = dbt_environments.get('return_value', {}) if isinstance(dbt_environments, dict) else {}
+        dbt_runs_data = dbt_runs.get('return_value', []) if isinstance(dbt_runs, dict) else []
+        
+        return {
+            'projects': dbt_projects_data,
+            'environments': dbt_environments_data,
+            'runs': dbt_runs_data
+        }
     
-    # Extract the actual values from the XCom objects
-    dbt_projects_data = dbt_projects['return_value'] if isinstance(dbt_projects, dict) else []
-    dbt_environments_data = dbt_environments['return_value'] if isinstance(dbt_environments, dict) else []
-    dbt_runs_data = dbt_runs['return_value'] if isinstance(dbt_runs, dict) else []
+    # Get the extracted data
+    extracted_data = extract_operator_data()
+    dbt_projects_data = extracted_data['projects']
+    dbt_environments_data = extracted_data['environments']
+    dbt_runs_data = extracted_data['runs']
     
     print(f"DEBUG: dbt_runs count={len(dbt_runs_data)} sample_ids={[r.get('run_id') for r in dbt_runs_data[:5]] if dbt_runs_data else []}")
     
-    # Create a new task to handle the enrichment
     @task
-    def enrich_and_get_queries(dbt_runs_data, dbt_projects_data, dbt_environments_data):
-        enriched_runs = enrich_runs(dbt_runs_data, dbt_projects_data, dbt_environments_data)
-        print(f"DEBUG: enriched_runs count={len(enriched_runs)} sample_ids={[r.get('run_id') for r in enriched_runs[:5]] if enriched_runs else []}")
+    def enrich_and_get_queries(runs, projects, environments):
+        # Ensure we have actual data, not XCom references
+        runs_data = runs if isinstance(runs, list) else []
+        projects_data = projects if isinstance(projects, dict) else {}
+        environments_data = environments if isinstance(environments, dict) else {}
+        
+        enriched_runs = enrich_runs(runs_data, projects_data, environments_data)
+        
+        # Safe print with type checking
+        if isinstance(enriched_runs, list):
+            print(f"DEBUG: enriched_runs count={len(enriched_runs)} sample_ids={[r.get('run_id') for r in enriched_runs[:5]] if enriched_runs else []}")
+        else:
+            print(f"DEBUG: enriched_runs is not a list, type={type(enriched_runs)}")
+            
         return enriched_runs
     
+    # Pass the raw data directly
     dbt_runs_enriched = enrich_and_get_queries(dbt_runs_data, dbt_projects_data, dbt_environments_data)
 
     # Get run ids to process for runs, resource runs, and failed test runs
