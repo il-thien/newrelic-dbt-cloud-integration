@@ -41,16 +41,16 @@ default_team = config['default_team']
 # Prefer Airflow Variable 'new_relic_account_id', then dag_config.yml, then environment variable NEW_RELIC_ACCOUNT_ID.
 nr_account_id = None
 try:
-    nr_account_id = Variable.get('new_relic_account_id', default_var=None)
+    nr_account_id = Variable.get('nr_account_id', default_var=None)
 except Exception:
     # Variable may not be available in some contexts; ignore and try other sources
     nr_account_id = None
 
 if not nr_account_id:
-    nr_account_id = config.get('new_relic_account_id') or os.environ.get('NEW_RELIC_ACCOUNT_ID')
+    nr_account_id = config.get('nr_account_id') or os.environ.get('NEW_RELIC_ACCOUNT_ID')
 
 if not nr_account_id:
-    raise Exception("Missing New Relic account id. Set Airflow Variable 'new_relic_account_id', add 'new_relic_account_id' to dag_config.yml, or set NEW_RELIC_ACCOUNT_ID environment variable")
+    raise Exception("Missing New Relic account id. Set Airflow Variable 'nr_account_id', add 'nr_account_id' to dag_config.yml, or set NEW_RELIC_ACCOUNT_ID environment variable")
 
 nr_account_id = int(nr_account_id)
 
