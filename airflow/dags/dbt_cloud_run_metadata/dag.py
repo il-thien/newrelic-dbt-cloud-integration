@@ -360,73 +360,74 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
         print(f'Dag Xcoms deleted')
 
     # Using a combination of taskflow and operators. Task flow automatically handles task dependencies in the DAG
-    # Get run data and extract from XCom
     @task
-    def extract_operator_data():
-        # Get outputs from operators
-        dbt_projects = get_dbt_projects.output
-        dbt_environments = get_dbt_environments.output
-        dbt_runs = get_dbt_runs.output
-        
-        # Extract actual values, with safe fallbacks
-        dbt_projects_data = dbt_projects.get('return_value', {}) if isinstance(dbt_projects, dict) else {}
-        dbt_environments_data = dbt_environments.get('return_value', {}) if isinstance(dbt_environments, dict) else {}
-        dbt_runs_data = dbt_runs.get('return_value', []) if isinstance(dbt_runs, dict) else []
-        
-        return {
-            'projects': dbt_projects_data,
-            'environments': dbt_environments_data,
-            'runs': dbt_runs_data
-        }
-    
-    # Get the extracted data
-    extracted_data = extract_operator_data()
-    dbt_projects_data = extracted_data['projects']
-    dbt_environments_data = extracted_data['environments']
-    dbt_runs_data = extracted_data['runs']
-    
-    print(f"DEBUG: dbt_runs count={len(dbt_runs_data)} sample_ids={[r.get('run_id') for r in dbt_runs_data[:5]] if dbt_runs_data else []}")
-    
-    @task
-    def enrich_and_get_queries(runs, projects, environments):
-        # Ensure we have actual data, not XCom references
-        runs_data = runs if isinstance(runs, list) else []
-        projects_data = projects if isinstance(projects, dict) else {}
-        environments_data = environments if isinstance(environments, dict) else {}
-        
-        enriched_runs = enrich_runs(runs_data, projects_data, environments_data)
-        
-        # Safe print with type checking
-        if isinstance(enriched_runs, list):
-            print(f"DEBUG: enriched_runs count={len(enriched_runs)} sample_ids={[r.get('run_id') for r in enriched_runs[:5]] if enriched_runs else []}")
-        else:
-            print(f"DEBUG: enriched_runs is not a list, type={type(enriched_runs)}")
+    def process_operator_data():
+        # Get outputs from operators and extract values
+        try:
+            dbt_projects = get_dbt_projects.output
+            dbt_environments = get_dbt_environments.output
+            dbt_runs = get_dbt_runs.output
             
-        return enriched_runs
+            # Extract data with proper type checking
+            dbt_projects_data = dbt_projects['return_value'] if isinstance(dbt_projects, dict) else {}
+            dbt_environments_data = dbt_environments['return_value'] if isinstance(dbt_environments, dict) else {}
+            dbt_runs_data = dbt_runs['return_value'] if isinstance(dbt_runs, dict) else []
+            
+            # Log the initial data state
+            if isinstance(dbt_runs_data, list):
+                print(f"DEBUG: Initial dbt_runs count={len(dbt_runs_data)} sample_ids={[r.get('run_id') for r in dbt_runs_data[:5]] if dbt_runs_data else []}")
+            else:
+                print(f"DEBUG: dbt_runs_data is not a list, type={type(dbt_runs_data)}")
+            
+            # Perform enrichment
+            enriched_runs = enrich_runs(dbt_runs_data, dbt_projects_data, dbt_environments_data)
+            
+            # Log the enriched data state
+            if isinstance(enriched_runs, list):
+                print(f"DEBUG: Enriched runs count={len(enriched_runs)} sample_ids={[r.get('run_id') for r in enriched_runs[:5]] if enriched_runs else []}")
+            else:
+                print(f"DEBUG: enriched_runs is not a list, type={type(enriched_runs)}")
+            
+            return enriched_runs
+            
+        except Exception as e:
+            print(f"ERROR in process_operator_data: {str(e)}")
+            raise
     
-    # Pass the raw data directly
-    dbt_runs_enriched = enrich_and_get_queries(dbt_runs_data, dbt_projects_data, dbt_environments_data)
-
-    # Get run ids to process for runs, resource runs, and failed test runs
-    nr_run_queries = get_nrql_queries(dbt_runs_enriched)
-    nr_runs = get_nr_run_ids(nr_run_queries['run_query'])
-    nr_resource_runs = get_nr_resource_run_ids(nr_run_queries['resource_run_query'])
-    nr_failed_test_row_runs = get_nr_failed_test_row_run_ids(nr_run_queries['failed_test_row_query'])
-    runs_to_process = get_runs_to_process(dbt_runs_enriched, nr_runs, nr_resource_runs, nr_failed_test_row_runs)
+    # Process data in a single task
+    dbt_runs_enriched = process_operator_data()
 
     @task
-    def log_processing_stats(runs_data):
-        if isinstance(runs_data, dict):
-            print(f"DEBUG: runs_to_process['runs_to_process'] count={len(runs_data['runs_to_process'])} "
-                  f"sample_ids={[r.get('run_id') for r in runs_data['runs_to_process'][:5]] if runs_data['runs_to_process'] else []}")
-            print(f"DEBUG: runs_to_process['resource_runs_to_process'] count={len(runs_data['resource_runs_to_process'])} "
-                  f"sample_ids={[r.get('run_id') for r in runs_data['resource_runs_to_process'][:5]] if runs_data['resource_runs_to_process'] else []}")
-            print(f"DEBUG: runs_to_process['failed_test_runs_to_process'] count={len(runs_data['failed_test_runs_to_process'])} "
-                  f"sample_ids={runs_data['failed_test_runs_to_process'][:5] if runs_data['failed_test_runs_to_process'] else []}")
-        return runs_data
+    def process_nrql_data(enriched_runs):
+        try:
+            # Get queries
+            nr_run_queries = get_nrql_queries(enriched_runs)
+            
+            # Get NR data
+            nr_runs = get_nr_run_ids(nr_run_queries['run_query'])
+            nr_resource_runs = get_nr_resource_run_ids(nr_run_queries['resource_run_query'])
+            nr_failed_test_row_runs = get_nr_failed_test_row_run_ids(nr_run_queries['failed_test_row_query'])
+            
+            # Process runs
+            runs_to_process = get_runs_to_process(enriched_runs, nr_runs, nr_resource_runs, nr_failed_test_row_runs)
+            
+            # Log processing stats
+            if isinstance(runs_to_process, dict):
+                print(f"DEBUG: runs_to_process['runs_to_process'] count={len(runs_to_process['runs_to_process'])} "
+                      f"sample_ids={[r.get('run_id') for r in runs_to_process['runs_to_process'][:5]] if runs_to_process['runs_to_process'] else []}")
+                print(f"DEBUG: runs_to_process['resource_runs_to_process'] count={len(runs_to_process['resource_runs_to_process'])} "
+                      f"sample_ids={[r.get('run_id') for r in runs_to_process['resource_runs_to_process'][:5]] if runs_to_process['resource_runs_to_process'] else []}")
+                print(f"DEBUG: runs_to_process['failed_test_runs_to_process'] count={len(runs_to_process['failed_test_runs_to_process'])} "
+                      f"sample_ids={runs_to_process['failed_test_runs_to_process'][:5] if runs_to_process['failed_test_runs_to_process'] else []}")
+            
+            return runs_to_process
+            
+        except Exception as e:
+            print(f"ERROR in process_nrql_data: {str(e)}")
+            raise
 
-    # Process runs with proper task dependencies
-    runs_data = log_processing_stats(runs_to_process)
+    # Process NRQL data in a task
+    runs_data = process_nrql_data(dbt_runs_enriched)
     process_runs(runs_data['runs_to_process'])
 
     failed_tests = process_resource_runs(
