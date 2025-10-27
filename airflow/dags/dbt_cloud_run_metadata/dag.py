@@ -371,8 +371,15 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
     dbt_runs_data = dbt_runs['return_value'] if isinstance(dbt_runs, dict) else []
     
     print(f"DEBUG: dbt_runs count={len(dbt_runs_data)} sample_ids={[r.get('run_id') for r in dbt_runs_data[:5]] if dbt_runs_data else []}")
-    dbt_runs_enriched = enrich_runs(dbt_runs_data, dbt_projects_data, dbt_environments_data)
-    print(f"DEBUG: dbt_runs_enriched count={len(dbt_runs_enriched)} sample_ids={[r.get('run_id') for r in dbt_runs_enriched[:5]] if dbt_runs_enriched else []}")
+    
+    # Create a new task to handle the enrichment
+    @task
+    def enrich_and_get_queries(dbt_runs_data, dbt_projects_data, dbt_environments_data):
+        enriched_runs = enrich_runs(dbt_runs_data, dbt_projects_data, dbt_environments_data)
+        print(f"DEBUG: enriched_runs count={len(enriched_runs)} sample_ids={[r.get('run_id') for r in enriched_runs[:5]] if enriched_runs else []}")
+        return enriched_runs
+    
+    dbt_runs_enriched = enrich_and_get_queries(dbt_runs_data, dbt_projects_data, dbt_environments_data)
 
     # Get run ids to process for runs, resource runs, and failed test runs
     nr_run_queries = get_nrql_queries(dbt_runs_enriched)
@@ -380,16 +387,25 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
     nr_resource_runs = get_nr_resource_run_ids(nr_run_queries['resource_run_query'])
     nr_failed_test_row_runs = get_nr_failed_test_row_run_ids(nr_run_queries['failed_test_row_query'])
     runs_to_process = get_runs_to_process(dbt_runs_enriched, nr_runs, nr_resource_runs, nr_failed_test_row_runs)
-    print(f"DEBUG: runs_to_process['runs_to_process'] count={len(runs_to_process['runs_to_process'])} sample_ids={[r.get('run_id') for r in runs_to_process['runs_to_process'][:5]] if runs_to_process['runs_to_process'] else []}")
-    print(f"DEBUG: runs_to_process['resource_runs_to_process'] count={len(runs_to_process['resource_runs_to_process'])} sample_ids={[r.get('run_id') for r in runs_to_process['resource_runs_to_process'][:5]] if runs_to_process['resource_runs_to_process'] else []}")
-    print(f"DEBUG: runs_to_process['failed_test_runs_to_process'] count={len(runs_to_process['failed_test_runs_to_process'])} sample_ids={runs_to_process['failed_test_runs_to_process'][:5] if runs_to_process['failed_test_runs_to_process'] else []}")
 
-    # Process runs
-    processed_runs = process_runs(runs_to_process['runs_to_process'])
+    @task
+    def log_processing_stats(runs_data):
+        if isinstance(runs_data, dict):
+            print(f"DEBUG: runs_to_process['runs_to_process'] count={len(runs_data['runs_to_process'])} "
+                  f"sample_ids={[r.get('run_id') for r in runs_data['runs_to_process'][:5]] if runs_data['runs_to_process'] else []}")
+            print(f"DEBUG: runs_to_process['resource_runs_to_process'] count={len(runs_data['resource_runs_to_process'])} "
+                  f"sample_ids={[r.get('run_id') for r in runs_data['resource_runs_to_process'][:5]] if runs_data['resource_runs_to_process'] else []}")
+            print(f"DEBUG: runs_to_process['failed_test_runs_to_process'] count={len(runs_data['failed_test_runs_to_process'])} "
+                  f"sample_ids={runs_data['failed_test_runs_to_process'][:5] if runs_data['failed_test_runs_to_process'] else []}")
+        return runs_data
+
+    # Process runs with proper task dependencies
+    runs_data = log_processing_stats(runs_to_process)
+    process_runs(runs_data['runs_to_process'])
 
     failed_tests = process_resource_runs(
-        runs_to_process['resource_runs_to_process'],
-        runs_to_process['failed_test_runs_to_process'])
+        runs_data['resource_runs_to_process'],
+        runs_data['failed_test_runs_to_process'])
 
     failed_test_rows = process_failed_test_rows(
         failed_tests['failed_tests'], 
