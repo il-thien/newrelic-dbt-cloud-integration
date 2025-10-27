@@ -54,11 +54,10 @@ query($accountId: Int!, $nrql: Nrql!) {
 }
 """
 
-NERDGRAPH_ENDPOINT = "https://api.newrelic.com/graphql"
-
 
 def execute_nerdgraph_nrql_query(nrql_query):
     conn = BaseHook.get_connection(nr_insights_query)
+    nerdgraph_endpoint = conn.host or "https://api.newrelic.com/graphql"  # Fallback to default if not set
     headers = {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
@@ -71,7 +70,7 @@ def execute_nerdgraph_nrql_query(nrql_query):
             'nrql': nrql_query,
         },
     }
-    response = requests.post(NERDGRAPH_ENDPOINT, json=payload, headers=headers, timeout=30)
+    response = requests.post(nerdgraph_endpoint, json=payload, headers=headers, timeout=30)
     response.raise_for_status()
     return nerdgraph_members_response_filter(response)
 
