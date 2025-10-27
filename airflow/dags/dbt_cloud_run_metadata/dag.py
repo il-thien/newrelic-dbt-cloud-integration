@@ -361,11 +361,17 @@ def new_relic_data_pipeline_observability_get_dbt_run_metadata2():
 
     # Using a combination of taskflow and operators. Task flow automatically handles task dependencies in the DAG
     # Get run data 
-    dbt_projects = get_dbt_projects.output['return_value']
-    dbt_environments = get_dbt_environments.output['return_value']
-    dbt_runs = get_dbt_runs.output['return_value']
-    print(f"DEBUG: dbt_runs count={len(dbt_runs)} sample_ids={[r.get('run_id') for r in dbt_runs[:5]] if dbt_runs else []}")
-    dbt_runs_enriched = enrich_runs(dbt_runs, dbt_projects, dbt_environments)
+    dbt_projects = get_dbt_projects.output
+    dbt_environments = get_dbt_environments.output
+    dbt_runs = get_dbt_runs.output
+    
+    # Extract the actual values from the XCom objects
+    dbt_projects_data = dbt_projects['return_value'] if isinstance(dbt_projects, dict) else []
+    dbt_environments_data = dbt_environments['return_value'] if isinstance(dbt_environments, dict) else []
+    dbt_runs_data = dbt_runs['return_value'] if isinstance(dbt_runs, dict) else []
+    
+    print(f"DEBUG: dbt_runs count={len(dbt_runs_data)} sample_ids={[r.get('run_id') for r in dbt_runs_data[:5]] if dbt_runs_data else []}")
+    dbt_runs_enriched = enrich_runs(dbt_runs_data, dbt_projects_data, dbt_environments_data)
     print(f"DEBUG: dbt_runs_enriched count={len(dbt_runs_enriched)} sample_ids={[r.get('run_id') for r in dbt_runs_enriched[:5]] if dbt_runs_enriched else []}")
 
     # Get run ids to process for runs, resource runs, and failed test runs
